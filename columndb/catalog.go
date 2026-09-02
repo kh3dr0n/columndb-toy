@@ -31,18 +31,29 @@ type Catalog struct {
 	walFile  *os.File
 }
 
+type walRecord struct {
+	Type    string          `json:"type"`
+	Segment segmentMetaJSON `json:"segment,omitempty"`
+	Paths   []string        `json:"paths,omitempty"`
+}
+
 func NewCatalog(walPath string) (*Catalog, error) {
 	c := &Catalog{}
 
 	if f, err := os.Open(walPath); err == nil {
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
-			var rec segmentMetaJSON
+			var rec walRecord
 			if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
 				f.Close()
 				return nil, err
 			}
-			c.segments = append(c.segments, fromJSON(rec))
+			switch rec.Type {
+			case "add":
+				c.segments = append(c.segments, fromJSON(rec.Segment))
+			case "retire":
+				c.removeByPaths(rec.Paths)
+			}
 		}
 		f.Close()
 		if err := scanner.Err(); err != nil {
@@ -95,21 +106,11 @@ func (c *Catalog) Register(meta SegmentMeta) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	line, err := json.Marshal(toJSON(meta))
-	if err != nil {
+	rec := walRecord{Type: "add", Segment: toJSON(meta)}
+	if err := c.appendLocked(rec); err != nil {
 		return err
 	}
-
-	if _, err := c.walFile.Write(append(line, '\n')); err != nil {
-		return err
-	}
-
-	if err := c.walFile.Sync(); err != nil {
-		return err
-	}
-
 	c.segments = append(c.segments, meta)
-
 	return nil
 }
 
@@ -158,4 +159,41 @@ func (c *Catalog) SegmentCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.segments)
+}
+
+func (c *Catalog) Retire(paths []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	rec := walRecord{Type: "retire", Paths: paths}
+	if err := c.appendLocked(rec); err != nil {
+		return err
+	}
+	c.removeByPaths(paths)
+	return nil
+}
+
+func (c *Catalog) appendLocked(rec walRecord) error {
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	if _, err := c.walFile.Write(append(line, '\n')); err != nil {
+		return err
+	}
+	return c.walFile.Sync()
+}
+
+func (c *Catalog) removeByPaths(paths []string) {
+	remove := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		remove[p] = struct{}{}
+	}
+	var kept []SegmentMeta
+	for _, s := range c.segments {
+		if _, dead := remove[s.Path]; !dead {
+			kept = append(kept, s)
+		}
+	}
+	c.segments = kept
 }
