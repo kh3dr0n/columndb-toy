@@ -25,6 +25,7 @@ func NewBuffer(segmentDir string, maxRows int, maxAge time.Duration, catalog *Ca
 		lastFlush:  time.Now(),
 		segmentDir: segmentDir,
 		catalog:    catalog,
+		segmentNum: catalog.SegmentCount(),
 	}
 }
 
@@ -51,7 +52,7 @@ func (b *Buffer) flushLocked() error {
 	}
 
 	b.segmentNum++
-	path := fmt.Sprintf("%s/segement_%04d.parket", b.segmentDir, b.segmentNum)
+	path := fmt.Sprintf("%s/segment_%04d.parket", b.segmentDir, b.segmentNum)
 
 	if err := WriteSegment(path, b.rows); err != nil {
 		return err

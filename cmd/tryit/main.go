@@ -16,6 +16,10 @@ func main() {
 	}
 	defer catalog.Close()
 
+	// prove replay worked: how many segments does the catalog already know about?
+	existing := catalog.Prune(0, 999999, "", "")
+	fmt.Printf("catalog recovered %d segment(s) from disk on startup\n", len(existing))
+
 	buf := columndb.NewBuffer("data", 2, 10*time.Second, catalog)
 
 	buf.Add(columndb.Row{Timestamp: 100, MetricName: "cpu.usage", Value: 1, Host: "host-a"})

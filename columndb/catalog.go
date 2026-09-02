@@ -154,3 +154,8 @@ func (m SegmentMeta) hasHost(host string) bool {
 func (c *Catalog) Close() error {
 	return c.walFile.Close()
 }
+func (c *Catalog) SegmentCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.segments)
+}
