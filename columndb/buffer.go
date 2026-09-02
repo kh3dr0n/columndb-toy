@@ -71,14 +71,17 @@ func (b *Buffer) flushLocked() error {
 		metrics[r.MetricName] = struct{}{}
 		hosts[r.Host] = struct{}{}
 	}
-	b.catalog.Register(SegementMeta{
+
+	if err := b.catalog.Register(SegmentMeta{
 		Path:     path,
 		MinTime:  minT,
 		MaxTime:  maxT,
 		RowCount: len(b.rows),
 		Metrics:  metrics,
 		Hosts:    hosts,
-	})
+	}); err != nil {
+		return err
+	}
 
 	fmt.Printf("flushed %d rows -> %s\n", len(b.rows), path)
 

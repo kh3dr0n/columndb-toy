@@ -1,8 +1,13 @@
 package columndb
 
-import "sync"
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"sync"
+)
 
-type SegementMeta struct {
+type SegmentMeta struct {
 	Path     string
 	MinTime  int64
 	MaxTime  int64
@@ -11,26 +16,108 @@ type SegementMeta struct {
 	Hosts    map[string]struct{}
 }
 
+type segmentMetaJSON struct {
+	Path     string   `json:"path"`
+	MinTime  int64    `json:"min_time"`
+	MaxTime  int64    `json:"max_time"`
+	RowCount int      `json:"row_count"`
+	Metrics  []string `json:"metrics"`
+	Hosts    []string `json:"hosts"`
+}
+
 type Catalog struct {
 	mu       sync.Mutex
-	segments []SegementMeta
+	segments []SegmentMeta
+	walFile  *os.File
 }
 
-func NewCatalog() *Catalog {
-	return &Catalog{}
+func NewCatalog(walPath string) (*Catalog, error) {
+	c := &Catalog{}
+
+	if f, err := os.Open(walPath); err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			var rec segmentMetaJSON
+			if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
+				f.Close()
+				return nil, err
+			}
+			c.segments = append(c.segments, fromJSON(rec))
+		}
+		f.Close()
+		if err := scanner.Err(); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	walFile, err := os.OpenFile(walPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	c.walFile = walFile
+
+	return c, nil
 }
 
-func (c *Catalog) Register(meta SegementMeta) {
+func toJSON(m SegmentMeta) segmentMetaJSON {
+	metrics := make([]string, 0, len(m.Metrics))
+	for k := range m.Metrics {
+		metrics = append(metrics, k)
+	}
+	hosts := make([]string, 0, len(m.Hosts))
+	for k := range m.Hosts {
+		hosts = append(hosts, k)
+	}
+	return segmentMetaJSON{
+		Path: m.Path, MinTime: m.MinTime, MaxTime: m.MaxTime, RowCount: m.RowCount,
+		Metrics: metrics, Hosts: hosts,
+	}
+}
+
+func fromJSON(r segmentMetaJSON) SegmentMeta {
+	metrics := make(map[string]struct{}, len(r.Metrics))
+	for _, v := range r.Metrics {
+		metrics[v] = struct{}{}
+	}
+	hosts := make(map[string]struct{}, len(r.Hosts))
+	for _, v := range r.Hosts {
+		hosts[v] = struct{}{}
+	}
+	return SegmentMeta{
+		Path: r.Path, MinTime: r.MinTime, MaxTime: r.MaxTime, RowCount: r.RowCount,
+		Metrics: metrics, Hosts: hosts,
+	}
+}
+
+func (c *Catalog) Register(meta SegmentMeta) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	line, err := json.Marshal(toJSON(meta))
+	if err != nil {
+		return err
+	}
+
+	if _, err := c.walFile.Write(append(line, '\n')); err != nil {
+		return err
+	}
+
+	if err := c.walFile.Sync(); err != nil {
+		return err
+	}
+
 	c.segments = append(c.segments, meta)
+
+	return nil
 }
 
-func (c *Catalog) Prune(from, to int64, metric, host string) []SegementMeta {
+func (c *Catalog) Prune(from, to int64, metric, host string) []SegmentMeta {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var matches []SegementMeta
+	var matches []SegmentMeta
 	for _, s := range c.segments {
 		if s.MaxTime < from || s.MinTime > to {
 			continue
@@ -48,7 +135,7 @@ func (c *Catalog) Prune(from, to int64, metric, host string) []SegementMeta {
 	return matches
 }
 
-func (m SegementMeta) hasMetric(name string) bool {
+func (m SegmentMeta) hasMetric(name string) bool {
 	if name == "" {
 		return true
 	}
@@ -56,10 +143,14 @@ func (m SegementMeta) hasMetric(name string) bool {
 	return ok
 }
 
-func (m SegementMeta) hasHost(host string) bool {
+func (m SegmentMeta) hasHost(host string) bool {
 	if host == "" {
 		return true
 	}
 	_, ok := m.Hosts[host]
 	return ok
+}
+
+func (c *Catalog) Close() error {
+	return c.walFile.Close()
 }
