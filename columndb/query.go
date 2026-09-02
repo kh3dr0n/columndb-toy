@@ -18,7 +18,7 @@ func Query(catalog *Catalog, params QueryParams) ([]Row, error) {
 
 	var results []Row
 	for _, seg := range candidates {
-		rows, err := readSegemt(seg.Path)
+		rows, err := readSegment(seg.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -32,7 +32,7 @@ func Query(catalog *Catalog, params QueryParams) ([]Row, error) {
 	return results, nil
 }
 
-func readSegemt(path string) ([]Row, error) {
+func readSegment(path string) ([]Row, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

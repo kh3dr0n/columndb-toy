@@ -83,7 +83,7 @@ func extractSegmentAttributes(allRows []Row) (int64, int64, map[string]struct{},
 func getAllRows(toMerge []SegmentMeta) ([]Row, error) {
 	var allRows []Row
 	for _, seg := range toMerge {
-		rows, err := readSegemt(seg.Path)
+		rows, err := readSegment(seg.Path)
 		if err != nil {
 			return nil, err
 		}
